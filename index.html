@@ -22,10 +22,9 @@
   #posBig small{font-size:16px;color:var(--dim);font-weight:600;}
   #lapLine{font-size:13px;color:var(--dim);margin-top:3px;font-variant-numeric:tabular-nums;}
   #lapLine b{color:var(--ink);}
-  #timeBox{position:absolute;top:calc(8px + env(safe-area-inset-top));right:10px;text-align:right;font-size:13px;line-height:1.55;font-variant-numeric:tabular-nums;}
-  #timeBox .lab{color:var(--dim);margin-right:6px;font-size:11px;letter-spacing:.08em;}
+  /* [v4] #timeBox（TIME/LAST/BEST表示）は削除し、その空いた右上隅へ #winPanel を移動した */
   /* [v3] ゴール後の隅の順位表（ウイニングラン用・画面中央を塞がない） */
-  #winPanel{position:absolute;top:calc(104px + env(safe-area-inset-top));right:10px;width:198px;pointer-events:auto;font-variant-numeric:tabular-nums;}
+  #winPanel{position:absolute;top:calc(8px + env(safe-area-inset-top));right:10px;width:198px;pointer-events:auto;font-variant-numeric:tabular-nums;}
   #winHead{font-size:12px;font-weight:800;letter-spacing:.08em;color:var(--accent);margin-bottom:2px;}
   #winSub{font-size:10.5px;color:var(--dim);margin-bottom:5px;line-height:1.45;}
   .winRow{display:flex;gap:5px;font-size:11.5px;line-height:1.65;color:var(--ink);}
@@ -83,7 +82,7 @@
   @media (orientation:portrait) and (max-width:560px){ #rotateHint{display:block;} }
   @media (max-width:560px){
     #posBig{font-size:27px;} #speedVal{font-size:32px;}
-    #timeBox{font-size:12px;} #driftScore{font-size:19px;}
+    #driftScore{font-size:19px;}
     #msgCenter{font-size:46px;} .tbtn{width:58px;height:58px;font-size:12px;} .tbtn.wide{width:68px;height:68px;}
     #miniWrap{display:none;} #speedBox{bottom:104px;}
   }
@@ -103,7 +102,9 @@
 @media (pointer:coarse){#btnAccel,.keys{display:none}}
 @media (orientation:landscape) and (max-height:520px){
  #posBox{left:calc(10px + env(safe-area-inset-left));padding:4px 8px}#posBig{font-size:26px}#lapLine{font-size:11px}
- #timeBox{right:calc(10px + env(safe-area-inset-right));font-size:11px;line-height:1.35;padding:4px 8px}
+ /* [v4] winPanel は右上隅（旧 timeBox の位置）。短い横画面では speedBox と重なるため、パネル表示中だけ speedBox を既定の右下へ逃がす */
+ #winPanel{right:calc(10px + env(safe-area-inset-right));width:186px}
+ .hud:has(#winPanel:not(.hidden)) #speedBox{top:auto;bottom:118px}
  #driftScore{font-size:18px}#driftBox{min-width:120px;padding:3px 8px}
  #miniWrap{display:block;left:calc(10px + env(safe-area-inset-left));top:calc(76px + env(safe-area-inset-top));bottom:auto;width:84px;height:84px;padding:2px !important}#mini{width:78px;height:78px}
  #speedBox{right:calc(12px + env(safe-area-inset-right));bottom:auto;top:calc(84px + env(safe-area-inset-top))}#speedVal{font-size:34px}
@@ -125,11 +126,7 @@
     <div id="posBig">5<small> / 5</small></div>
     <div id="lapLine">LAP <b>1</b> / 3</div>
   </div>
-  <div class="plate" id="timeBox">
-    <div><span class="lab">TIME</span><span id="tCur">0:00.000</span></div>
-    <div><span class="lab">LAST</span><span id="tLast">--:--.---</span></div>
-    <div><span class="lab">BEST</span><span id="tBest">--:--.---</span></div>
-  </div>
+  <!-- [v4] TIME/LAST/BEST の #timeBox は削除。空いた右上隅に下の #winPanel を表示する -->
   <!-- [v3] ゴール後の順位表は画面隅の小さなパネルに表示（ウイニングラン中も走り続けられる） -->
   <div class="plate hidden" id="winPanel">
     <div id="winHead">FINISH</div>
@@ -178,7 +175,7 @@
       <span><b>R</b> コースに復帰</span>
       <span><b>画面ボタン</b> スマホ操作</span>
     </div>
-    <div style="font-size:12px;opacity:.85;margin-top:6px">AI難易度</div><div class="seg lvSeg"></div><button class="bigbtn" id="btnStart">レーススタート</button>
+    <div style="font-size:12px;opacity:.85;margin-top:6px">AI難易度</div><div class="seg lvSeg"></div><div style="font-size:12px;opacity:.85;margin-top:6px">コース（難易度順）</div><div class="seg" id="courseSeg"></div><button class="bigbtn" id="btnStart">レーススタート</button>
   </div>
 </div>
 
@@ -4882,21 +4879,50 @@ window.addEventListener('error',function(e){ errBox.style.display='block'; errBo
 window.addEventListener('unhandledrejection',function(e){ errBox.style.display='block'; errBox.textContent='Error: '+(e.reason&&e.reason.message||e.reason); });
 
 /* ============================== TRACK DATA ============================== */
-var CTRL=[[-40,-200],[40,-200],[130,-200],[210,-200],[270,-185],[300,-140],[295,-90],[255,-60],[250,-20],[290,10],[300,60],[270,110],[220,130],[180,100],[150,130],[110,170],[40,180],[-40,170],[-110,175],[-170,140],[-190,80],[-150,40],[-100,30],[-60,-10],[-100,-60],[-170,-80],[-200,-130],[-150,-185]].map(function(p){return [p[0]-50,p[1]+10];});
-var curve=new THREE.CatmullRomCurve3(CTRL.map(function(p){return new THREE.Vector3(p[0],0,p[1]);}),true,'catmullrom',0.6);
-var TRACK_LEN=curve.getLength();
+/* [v4] コースは4つ・難易度順。今までのコースは下から2番目（インデックス1「クラシックGP」、制御点は従来の
+   [-50,+10] オフセット適用済みの値で従来と完全同一レイアウト）。
+   難易度は主にレイアウトの複雑さ（コーナー数・きつさ、S字/シケイン/ヘアピン）で付け、補助として道幅 half を変える。
+   各コースは中心線の制御点 ctrl [x,z] で定義し、setTrackData() が既存の仕組み（CatmullRom→pts/curvature）を一般化して構築する。 */
+var COURSES=[
+  {name:'サンシャイン・オーバル', stars:'★☆☆☆', note:'入門・広い', half:9.5,
+   ctrl:[[-150,-110],[-50,-125],[50,-125],[150,-110],[195,-40],[195,45],[150,110],[50,125],[-50,125],[-150,110],[-195,45],[-195,-40]]},
+  {name:'クラシックGP', stars:'★★☆☆', note:'標準', half:7.2,
+   ctrl:[[-90,-190],[-10,-190],[80,-190],[160,-190],[220,-175],[250,-130],[245,-80],[205,-50],[200,-10],[240,20],[250,70],[220,120],[170,140],[130,110],[100,140],[60,180],[-10,190],[-90,180],[-160,185],[-220,150],[-240,90],[-200,50],[-150,40],[-110,0],[-150,-50],[-220,-70],[-250,-120],[-200,-175]]},
+  {name:'ツイスティ・ヒルズ', stars:'★★★☆', note:'上級・やや狭い', half:6.2,
+   ctrl:[[-170,-150],[-80,-165],[10,-150],[80,-170],[160,-150],[212,-92],[148,-38],[218,18],[185,80],[120,65],[95,125],[30,100],[-35,150],[-105,120],[-82,52],[-160,45],[-195,-10],[-150,-70],[-205,-115]]},
+  {name:'デビルズ・テクニカル', stars:'★★★★', note:'最難・狭い', half:5.4,
+   ctrl:[[-190,-140],[-110,-160],[-30,-135],[30,-165],[110,-150],[185,-175],[225,-110],[175,-60],[230,-5],[195,60],[130,45],[150,110],[85,150],[20,115],[-40,160],[-110,130],[-80,75],[-140,55],[-120,0],[-185,-25],[-160,-85],[-215,-105]]}
+];
+var courseIdx=1; // [v4] 既定は今までのコース（下から2番目）
+try{ var _ci=parseInt(localStorage.getItem('f1_course'),10); if(_ci>=0&&_ci<COURSES.length) courseIdx=_ci; }catch(e){}
 var SAMPLES=1200;
-var pts=curve.getSpacedPoints(SAMPLES); // SAMPLES+1, last==first
-var ROAD_HALF=7.2, RAIL_DIST=26;
+var CTRL=null, curve=null, TRACK_LEN=0, pts=null, curvature=null, ROAD_HALF=7.2, RAIL_DIST=26;
+/* [v4] ミニマップ用コース範囲（HUD の drawMini が参照。コース切替時に setTrackData が更新する） */
+var miniPts=[], mm={minX:1e9,maxX:-1e9,minZ:1e9,maxZ:-1e9};
+function computeMiniBounds(){
+  miniPts=CTRL.map(function(p){return p;});
+  mm={minX:1e9,maxX:-1e9,minZ:1e9,maxZ:-1e9};
+  pts.forEach(function(p){ mm.minX=Math.min(mm.minX,p.x); mm.maxX=Math.max(mm.maxX,p.x); mm.minZ=Math.min(mm.minZ,p.z); mm.maxZ=Math.max(mm.maxZ,p.z); });
+}
+function setTrackData(def){ // [v4] 選択コースの中心線・サンプル点・曲率・道幅を再構築する
+  CTRL=def.ctrl;
+  ROAD_HALF=def.half; RAIL_DIST=def.half+18.8; // コース2では従来どおり ROAD_HALF=7.2 / RAIL_DIST=26
+  curve=new THREE.CatmullRomCurve3(CTRL.map(function(p){return new THREE.Vector3(p[0],0,p[1]);}),true,'catmullrom',0.6);
+  TRACK_LEN=curve.getLength();
+  pts=curve.getSpacedPoints(SAMPLES); // SAMPLES+1, last==first
+  // curvature for AI speed + corners
+  curvature=new Float32Array(SAMPLES);
+  for(var ci=0;ci<SAMPLES;ci++){
+    var t0=tangentAt(ci-6),t1=tangentAt(ci+6);
+    curvature[ci]=t0.angleTo(t1);
+  }
+  computeMiniBounds();
+}
+setTrackData(COURSES[courseIdx]);
 function sampleAt(i){ i=((i%SAMPLES)+SAMPLES)%SAMPLES; return pts[i]; }
 function tangentAt(i){ var a=sampleAt(i-2),b=sampleAt(i+2); return new THREE.Vector3(b.x-a.x,0,b.z-a.z).normalize(); }
 function normalAt(i){ var t=tangentAt(i); return new THREE.Vector3(-t.z,0,t.x); }
-// curvature for AI speed + corners
-var curvature=new Float32Array(SAMPLES);
-for(var ci=0;ci<SAMPLES;ci++){
-  var t0=tangentAt(ci-6),t1=tangentAt(ci+6);
-  curvature[ci]=t0.angleTo(t1);
-}
+// [v4] curvature の計算は setTrackData() 内へ移動（コースごとに再計算する）
 function nearestIndex(pos,guess){
   var best=guess,bd=1e18;
   for(var o=-40;o<=40;o++){
@@ -4993,10 +5019,18 @@ function buildRibbon(halfW,y,mat,vScale){
   var m=new THREE.Mesh(geo,mat); m.receiveShadow=true; return m;
 }
 var roadMat=new THREE.MeshStandardMaterial({map:makeRoadTexture(),roughness:0.94,metalness:0,side:THREE.DoubleSide});
-scene.add(buildRibbon(ROAD_HALF,0.02,roadMat,11));
 var shoulderMat=new THREE.MeshStandardMaterial({color:0xc9b98f,roughness:1,side:THREE.DoubleSide});
-scene.add(buildRibbon(13,-0.02,shoulderMat,30));
+/* [v4] 路面リボンの scene 追加は buildTrackScene() 側で行う（コース切替で作り直すため） */
 
+/* [v4] コース依存のシーン（路面・スタートライン・ゴールゲート・縁石・タイヤ壁・木）は buildTrackScene() にまとめ、
+   コース切替時に trackGroup ごと作り直す。地形・山・車両などコース非依存のものは従来どおり scene 直下。 */
+var trackGroup=null;
+var goalFX=function(){}; // [v4] ゴール演出は buildTrackScene 内でコースごとに割り当て直すため、外側スコープで宣言する
+var mountainsBuilt=false; // [v4] 山は初回のみ生成
+function buildTrackScene(){
+  trackGroup=new THREE.Group(); scene.add(trackGroup);
+  trackGroup.add(buildRibbon(ROAD_HALF,0.02,roadMat,11));
+  trackGroup.add(buildRibbon(13,-0.02,shoulderMat,30));
 /* start line */
 (function(){
   var p=sampleAt(0), n=normalAt(0);
@@ -5008,13 +5042,12 @@ scene.add(buildRibbon(13,-0.02,shoulderMat,30));
   m.rotation.x=-Math.PI/2;
   m.rotation.z=Math.atan2(n.x,n.z)+Math.PI/2;
   m.position.set(p.x,0.045,p.z);
-  scene.add(m);
+  trackGroup.add(m); // [v4]
 })();
 
-var goalFX=function(){};
-(function(){
+(function(){ // [v4] goalFX 本体はこの中で外側の goalFX へ代入する
   var p=sampleAt(0),t=tangentAt(0),h=Math.atan2(t.x,t.z),W=ROAD_HALF+2.4;
-  var G=new THREE.Group();G.position.set(p.x,0,p.z);G.rotation.y=h;scene.add(G);
+  var G=new THREE.Group();G.position.set(p.x,0,p.z);G.rotation.y=h;trackGroup.add(G); // [v4]
   var red=new THREE.MeshStandardMaterial({color:0xd8232a,roughness:0.5}),wht=new THREE.MeshStandardMaterial({color:0xf2f2f2,roughness:0.5});
   [-1,1].forEach(function(k){var m=new THREE.Mesh(new THREE.BoxGeometry(1,13,1),red);m.position.set(k*W,6.5,0);m.castShadow=true;G.add(m);});
   var bm=new THREE.Mesh(new THREE.BoxGeometry(2*W+1,1.1,1.1),wht);bm.position.set(0,13,0);G.add(bm);
@@ -5045,7 +5078,7 @@ var goalFX=function(){};
       if(i<seg){var a=i*2;I.push(a,a+1,a+2,a+1,a+3,a+2);}}
     var g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(P,3));
     g.setAttribute('uv',new THREE.Float32BufferAttribute(U,2));g.setIndex(I);g.computeVertexNormals();
-    var m=new THREE.Mesh(g,mat);m.receiveShadow=true;scene.add(m);}
+    var m=new THREE.Mesh(g,mat);m.receiveShadow=true;trackGroup.add(m);} // [v4]
   var kc=document.createElement('canvas');kc.width=4;kc.height=32;var kg=kc.getContext('2d');
   kg.fillStyle='#d8261f';kg.fillRect(0,0,4,16);kg.fillStyle='#f4f4f0';kg.fillRect(0,16,4,16);
   var kt=new THREE.CanvasTexture(kc);kt.wrapS=kt.wrapT=THREE.RepeatWrapping;
@@ -5083,7 +5116,9 @@ var goalFX=function(){};
   }
   trunks.count=leaves.count=placed;
   leaves.castShadow=true;
-  scene.add(trunks); scene.add(leaves);
+  trackGroup.add(trunks); trackGroup.add(leaves); // [v4] 木はコース沿いに配置し直すため trackGroup 側へ
+  /* [v4] 山はコース非依存なので初回だけ scene に作る（buildTrackScene の再実行で重複させない） */
+  if(mountainsBuilt) return; mountainsBuilt=true;
   var rockM=new THREE.MeshStandardMaterial({color:0x707a80,roughness:1,flatShading:true});
   var snowM=new THREE.MeshStandardMaterial({color:0xe8eef2,roughness:0.9,flatShading:true});
   for(var mi=0;mi<11;mi++){
@@ -5098,6 +5133,22 @@ var goalFX=function(){};
     cap.rotation.y=cone.rotation.y; scene.add(cap);
   }
 })();
+} // [v4] buildTrackScene ここまで
+buildTrackScene(); // [v4] 初期コース（選択済みコース）のシーンを構築
+/* [v4] コース切替：中心線データを差し替え、コース依存シーン・グリッド・ミニマップ範囲を作り直す。
+   タイトル画面でのみ呼ばれる（レース中の切替は行わない）。 */
+function loadCourse(i){
+  courseIdx=i;
+  try{ localStorage.setItem('f1_course',i); }catch(e){}
+  setTrackData(COURSES[i]);
+  if(trackGroup){ scene.remove(trackGroup); trackGroup.traverse(function(o){ if(o.geometry) o.geometry.dispose(); }); }
+  buildTrackScene();
+  var zm=new THREE.Matrix4().makeScale(0,0,0); // 前コースのスキッドマークを消去
+  for(var k=0;k<SKID_MAX;k++) skidMesh.setMatrixAt(k,zm);
+  skidMesh.instanceMatrix.needsUpdate=true; skidIdx=0;
+  resetGrid(); snapCamera();
+  buildCourseSeg();
+}
 
 /* ============================== CARS ============================== */
 function buildCar(color){
@@ -5277,6 +5328,20 @@ var LV_N=['ビギナー','ノーマル','ハード','エキスパート','チャ
 var aiLevel=0,camMode=0;try{aiLevel=Math.max(0,Math.min(4,+localStorage.getItem('f1_lv')||0));camMode=Math.max(0,Math.min(2,+localStorage.getItem('f1_cam')||0));}catch(e){}
 function buildSegs(){document.querySelectorAll('.lvSeg').forEach(function(sg){sg.innerHTML='';LV_N.forEach(function(n,i){var b=document.createElement('button');b.textContent=n;b.className=i===aiLevel?'on':'';b.addEventListener('click',function(){aiLevel=i;try{localStorage.setItem('f1_lv',i);}catch(e){}buildSegs();});sg.appendChild(b);});});}
 buildSegs();
+/* [v4] コース選択セグメント（タイトル画面）。難易度順に4コースを並べ、タッチで切り替える */
+function buildCourseSeg(){
+  var sg=document.getElementById('courseSeg'); if(!sg) return;
+  sg.innerHTML='';
+  COURSES.forEach(function(c,i){
+    var b=document.createElement('button');
+    b.innerHTML=c.name+'<br><span style="font-size:10px;opacity:.85">'+c.stars+' '+c.note+'</span>';
+    b.style.lineHeight='1.35';
+    b.className=i===courseIdx?'on':'';
+    b.addEventListener('click',function(){ if(i!==courseIdx) loadCourse(i); });
+    sg.appendChild(b);
+  });
+}
+buildCourseSeg();
 var CAMS=[{d:9.8,h:4.3,l:7,ly:1.1,f:62,n:'三人称'},{d:6.2,h:2.7,l:7,ly:1.1,f:62,n:'三人称（近）'},{d:0,h:0,l:25,ly:1.0,f:76,n:'一人称'}];
 function cycleCam(){camMode=(camMode+1)%3;camera.near=camMode===2?0.05:0.1;camera.updateProjectionMatrix();try{localStorage.setItem('f1_cam',camMode);}catch(e){}
   showMsg(CAMS[camMode].n,'');setTimeout(function(){if(state!=='count')showMsg('','');},700);}
@@ -5686,7 +5751,8 @@ function currentPosition(){
 
 /* ============================== HUD ============================== */
 var elPos=document.getElementById('posBig'), elLap=document.getElementById('lapLine'),
-    elTC=document.getElementById('tCur'), elTL=document.getElementById('tLast'), elTB=document.getElementById('tBest'),
+    /* [v4] #timeBox（TIME/LAST/BEST表示）は削除した。ラップ記録自体は player.lastLap / player.bestLap に
+       内部保持され続け、ウイニングランの隅パネル（winSub）にゴールタイム／ベストラップが表示される */
     elSpeed=document.getElementById('speedVal'), elGear=document.getElementById('gearLine'),
     elDrift=document.getElementById('driftScore'), elChain=document.getElementById('driftChain'),
     elPop=document.getElementById('driftPop');
@@ -5695,9 +5761,7 @@ function popDrift(txt){return;
   elPop.classList.remove('show'); void elPop.offsetWidth; elPop.classList.add('show');
 }
 var mini=document.getElementById('mini'), mg=mini.getContext('2d');
-var miniPts=CTRL.map(function(p){return p;});
-var mm={minX:1e9,maxX:-1e9,minZ:1e9,maxZ:-1e9};
-pts.forEach(function(p){ mm.minX=Math.min(mm.minX,p.x);mm.maxX=Math.max(mm.maxX,p.x);mm.minZ=Math.min(mm.minZ,p.z);mm.maxZ=Math.max(mm.maxZ,p.z); });
+/* [v4] miniPts / mm / computeMiniBounds は TRACK DATA 側で定義し、コース切替時に setTrackData が更新する */
 function drawMini(){
   var W=208,H=208; mg.clearRect(0,0,W,H);
   function mx(x){ return 14+(x-mm.minX)/(mm.maxX-mm.minX)*(W-28); }
@@ -5722,9 +5786,7 @@ function updateHUD(dt,vF){
   var pos=currentPosition();
   elPos.innerHTML=pos+'<small> / '+racers.length+'</small>';
   elLap.innerHTML='LAP <b>'+Math.min(player.lap,TOTAL_LAPS)+'</b> / '+TOTAL_LAPS;
-  elTC.textContent=fmt(state==='race'?raceTime-player.lapStart:(state==='winrun'?player.finishTime:0)); // [v3] ウイニングラン中は確定したゴールタイムを表示
   if(state==='winrun') renderWinPanel(); // [v3] AIがゴールするたびに隅の順位表を更新する
-  elTL.textContent=fmt(player.lastLap); elTB.textContent=fmt(player.bestLap);
   elSpeed.textContent=Math.round(Math.abs(vF)*3.6);
   elGear.textContent=boostT>0?'BOOST!!':drifting?'DRIFT!!':(player.offtrack?'OFF ROAD':'');
   elDrift.textContent=Math.round(boostE)+'%'; elDrift.style.color=boostE<20?'#ff5a4d':'#5ad1ff';
