@@ -152,7 +152,7 @@
 <div id="rotateOv"><div class="ph"></div>スマホを横向きにしてね</div>
 <div class="tbtn" id="btnPause">II</div>
 <div class="tbtn" id="btnCam">CAM</div>
-<div class="overlay hidden" id="pauseCard"><div class="card"><h1>PAUSE</h1><div style="font-size:12px;opacity:.85">AI難易度</div><div class="seg lvSeg"></div><button class="bigbtn" id="btnResume">再開</button><button class="bigbtn" id="btnRestart" style="background:#39434d;color:#fff">最初からやり直す</button></div></div>
+<div class="overlay hidden" id="pauseCard"><div class="card"><h1>PAUSE</h1><div style="font-size:12px;opacity:.85">AI難易度</div><div class="seg lvSeg"></div><button class="bigbtn" id="btnResume">再開</button><button class="bigbtn" id="btnRestart" style="background:#39434d;color:#fff">最初からやり直す</button><button class="bigbtn" id="btnPauseTitle" style="background:#39434d;color:#fff">タイトルへ</button></div></div> <!-- [v6] ポーズからタイトルへ -->
 
 <div class="controls" id="controls">
   <div class="padLeft"><div class="steerPad" id="steerPad"><div id="knob"></div></div></div>
@@ -5087,7 +5087,7 @@ function buildRibbon(halfW,y,mat,vScale){
   var m=new THREE.Mesh(geo,mat); m.receiveShadow=true; return m;
 }
 var roadTex=makeRoadTexture(); // [v5] 同じ絵を bump にも使い、アスファルトの凹凸を光で拾わせる
-var roadMat=new THREE.MeshStandardMaterial({map:roadTex,bumpMap:roadTex,bumpScale:0.6,roughness:0.93,metalness:0,side:THREE.DoubleSide});
+var roadMat=new THREE.MeshStandardMaterial({map:roadTex,bumpMap:roadTex,bumpScale:0.35,roughness:0.42,metalness:0.05,envMapIntensity:1.1,side:THREE.DoubleSide}); // [v6] 路面に濡れたようなツヤ（空が映り込む）で劇的に見た目を変える
 var shoulderMat=new THREE.MeshStandardMaterial({color:0xc9b98f,roughness:1,side:THREE.DoubleSide});
 /* [v4] 路面リボンの scene 追加は buildTrackScene() 側で行う（コース切替で作り直すため） */
 
@@ -5206,6 +5206,96 @@ function buildTrackScene(){
     cap.rotation.y=cone.rotation.y; cap.scale.copy(cone.scale); scene.add(cap); // [v5]
   }
 })();
+
+/* [v6] サーキット環境の増設：広告ボード、グランドスタンド、ピットビル、照明塔。
+   実在サーキットの「囲まれている感じ」を出すのが狙い。すべて trackGroup 内でコース切替に追従する */
+(function(){
+  // --- advertising boards along the track ---
+  var ads=[['APEX','#101418','#ffd23e'],['VELOCE','#0d2f6e','#ffffff'],['MOCHI GP','#b3001b','#ffffff'],['NITRO+','#101418','#5ad1ff'],['TURBO','#e8e8e8','#111111'],['PADDOCK','#14532d','#ffffff']];
+  var adMats=ads.map(function(a){
+    var c=document.createElement('canvas'); c.width=512; c.height=84; var g=c.getContext('2d');
+    g.fillStyle=a[1]; g.fillRect(0,0,512,84);
+    g.fillStyle=a[2]; g.font='900 52px sans-serif'; g.textAlign='center'; g.textBaseline='middle';
+    g.fillText(a[0],256,46);
+    g.fillStyle='rgba(255,255,255,0.25)'; g.fillRect(0,0,512,5); g.fillRect(0,79,512,5);
+    var t=new THREE.CanvasTexture(c); if(THREE.SRGBColorSpace) t.colorSpace=THREE.SRGBColorSpace;
+    return new THREE.MeshStandardMaterial({map:t,roughness:0.6});
+  });
+  var boardGeo=new THREE.BoxGeometry(7,1.05,0.18);
+  var postGeo=new THREE.BoxGeometry(0.12,0.5,0.12);
+  var postMat=new THREE.MeshStandardMaterial({color:0x2a2e33,roughness:0.8});
+  var step=Math.max(6,Math.floor(SAMPLES/110));
+  for(var bi=0;bi<SAMPLES;bi+=step){
+    var sd=(Math.floor(bi/step)%2===0)?1:-1;
+    var bp=sampleAt(bi), bn=normalAt(bi), bt=tangentAt(bi);
+    var bx=bp.x+bn.x*sd*(ROAD_HALF+3.4), bz=bp.z+bn.z*sd*(ROAD_HALF+3.4);
+    var bd=new THREE.Mesh(boardGeo,adMats[Math.floor(bi/step)%adMats.length]);
+    bd.position.set(bx,0.85,bz); bd.rotation.y=Math.atan2(-bn.x*sd,-bn.z*sd); // 面をコース側へ向け、長辺を進行方向に沿わせる
+    trackGroup.add(bd);
+    [-2.6,2.6].forEach(function(off){ var ps=new THREE.Mesh(postGeo,postMat);
+      ps.position.set(bx+bt.x*off,0.25,bz+bt.z*off); trackGroup.add(ps); });
+  }
+  // --- grandstands with crowd texture ---
+  function crowdTex(){ var c=document.createElement('canvas'); c.width=256; c.height=128; var g=c.getContext('2d');
+    g.fillStyle='#3c4148'; g.fillRect(0,0,256,128);
+    var cols=['#e74c3c','#f1c40f','#3498db','#ecf0f1','#e67e22','#2ecc71','#fd79a8','#a29bfe'];
+    for(var i=0;i<2600;i++){ g.fillStyle=cols[(Math.random()*cols.length)|0];
+      g.fillRect(Math.random()*256,Math.random()*128,2.4,2.4); }
+    var t=new THREE.CanvasTexture(c); if(THREE.SRGBColorSpace) t.colorSpace=THREE.SRGBColorSpace; return t; }
+  var crowdM=new THREE.MeshStandardMaterial({map:crowdTex(),roughness:0.95});
+  var concM=new THREE.MeshStandardMaterial({color:0x8d9399,roughness:0.9});
+  var roofM=new THREE.MeshStandardMaterial({color:0xd8dde2,roughness:0.5,metalness:0.4});
+  function makeStand(frac,sd){
+    var idx=Math.floor(frac*SAMPLES)%SAMPLES;
+    var p=sampleAt(idx), n=normalAt(idx);
+    var grp=new THREE.Group();
+    grp.position.set(p.x+n.x*sd*(ROAD_HALF+17),0,p.z+n.z*sd*(ROAD_HALF+17));
+    grp.lookAt(p.x,0,p.z);
+    var base=new THREE.Mesh(new THREE.BoxGeometry(26,1,9),concM); base.position.y=0.5; grp.add(base);
+    var seats=new THREE.Mesh(new THREE.BoxGeometry(25,5.5,7.5),crowdM);
+    seats.position.set(0,3.6,0.6); seats.rotation.x=0.5; seats.castShadow=true; grp.add(seats);
+    var back=new THREE.Mesh(new THREE.BoxGeometry(26,7,0.6),concM); back.position.set(0,3.5,4.4); grp.add(back);
+    var roof=new THREE.Mesh(new THREE.BoxGeometry(27,0.35,10.5),roofM); roof.position.set(0,8.6,0.6); roof.castShadow=true; grp.add(roof);
+    [-11,-3.7,3.7,11].forEach(function(x){ var pole=new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.16,8.4,8),concM);
+      pole.position.set(x,4.2,-2.6); grp.add(pole); });
+    trackGroup.add(grp);
+  }
+  makeStand(0.03,1); makeStand(0.30,-1); makeStand(0.55,1); makeStand(0.82,-1);
+  // --- pit building near start line ---
+  (function(){
+    var p=sampleAt(0), n=normalAt(0), t=tangentAt(0);
+    var grp=new THREE.Group();
+    grp.position.set(p.x+n.x*(ROAD_HALF+15),0,p.z+n.z*(ROAD_HALF+15));
+    grp.lookAt(p.x,0,p.z);
+    var main=new THREE.Mesh(new THREE.BoxGeometry(46,8,11),new THREE.MeshStandardMaterial({color:0xb9bfc6,roughness:0.7}));
+    main.position.y=4; main.castShadow=true; grp.add(main);
+    var glassBand=new THREE.Mesh(new THREE.BoxGeometry(45,2.6,0.3),new THREE.MeshPhysicalMaterial({color:0x18242f,roughness:0.08,metalness:0.1,envMapIntensity:1.5}));
+    glassBand.position.set(0,5.6,-5.6); grp.add(glassBand);
+    var garage=new THREE.Mesh(new THREE.BoxGeometry(45,3.4,0.3),new THREE.MeshStandardMaterial({color:0x3a4046,roughness:0.6,metalness:0.3}));
+    garage.position.set(0,1.7,-5.6); grp.add(garage);
+    var c=document.createElement('canvas'); c.width=1024; c.height=96; var g=c.getContext('2d');
+    g.fillStyle='#14181d'; g.fillRect(0,0,1024,96); g.fillStyle='#ffd23e'; g.font='900 62px sans-serif';
+    g.textAlign='center'; g.textBaseline='middle'; g.fillText('PIT LANE — MOCHI GRAND PRIX',512,52);
+    var tx=new THREE.CanvasTexture(c); if(THREE.SRGBColorSpace) tx.colorSpace=THREE.SRGBColorSpace;
+    var sign=new THREE.Mesh(new THREE.BoxGeometry(40,2.2,0.4),new THREE.MeshStandardMaterial({map:tx,roughness:0.6}));
+    sign.position.set(0,9.2,-5.2); grp.add(sign);
+    trackGroup.add(grp);
+  })();
+  // --- floodlight poles ---
+  var poleM=new THREE.MeshStandardMaterial({color:0x565d63,roughness:0.5,metalness:0.6});
+  var lampM=new THREE.MeshStandardMaterial({color:0xffffff,emissive:0xf4f7ff,emissiveIntensity:1.6});
+  [0.12,0.38,0.62,0.88].forEach(function(frac,fi){
+    var idx=Math.floor(frac*SAMPLES)%SAMPLES, sd=fi%2===0?1:-1;
+    var p=sampleAt(idx), n=normalAt(idx);
+    var grp=new THREE.Group();
+    grp.position.set(p.x+n.x*sd*(ROAD_HALF+9),0,p.z+n.z*sd*(ROAD_HALF+9));
+    grp.lookAt(p.x,0,p.z);
+    var pole=new THREE.Mesh(new THREE.CylinderGeometry(0.22,0.3,17,8),poleM); pole.position.y=8.5; pole.castShadow=true; grp.add(pole);
+    var head=new THREE.Mesh(new THREE.BoxGeometry(3.4,1.1,0.3),poleM); head.position.set(0,17,-0.6); head.rotation.x=0.5; grp.add(head);
+    var lamps=new THREE.Mesh(new THREE.BoxGeometry(3.1,0.85,0.1),lampM); lamps.position.set(0,16.9,-0.85); lamps.rotation.x=0.5; grp.add(lamps);
+    trackGroup.add(grp);
+  });
+})();
 } // [v4] buildTrackScene ここまで
 buildTrackScene(); // [v4] 初期コース（選択済みコース）のシーンを構築
 /* [v4] コース切替：中心線データを差し替え、コース依存シーン・グリッド・ミニマップ範囲を作り直す。
@@ -5226,69 +5316,116 @@ function loadCourse(i){
 /* ============================== CARS ============================== */
 function buildCar(color){
   var g=new THREE.Group();
-  // [v2] 車体とタイヤの分離: ボディ系メッシュは body グループにまとめ、タイヤ(pivot)は g 直下に残す。
-  // これで車体だけを独立して揺らしても、タイヤは接地したままにできる。
+  // [v2] 車体とタイヤの分離は維持（body だけが揺れる）
   var body=new THREE.Group(); g.add(body);
-  /* [v5] 塗装はクリアコート付きの物理マテリアルに（下地の色＋透明なクリア層の二重反射が車の塗装らしさ）。
-     カーボン部品は織り目テクスチャ、キャノピーは暗いガラスにする */
-  var paint=new THREE.MeshPhysicalMaterial({color:color,roughness:0.34,metalness:0.25,clearcoat:1,clearcoatRoughness:0.08,envMapIntensity:1.25});
-  var carbonTex=(function(){ var c=document.createElement('canvas'); c.width=c.height=32; var g=c.getContext('2d');
-    for(var y=0;y<8;y++)for(var x=0;x<8;x++){ var h=((x+y)%2===0); g.fillStyle=h?'#1b1e22':'#0c0e10'; g.fillRect(x*4,y*4,4,4);
-      g.fillStyle='rgba(255,255,255,0.10)'; if(h) g.fillRect(x*4,y*4,4,1.4); else g.fillRect(x*4,y*4,1.4,4); }
+  /* [v6] 車両モデルを本格F1形状に全面刷新：ハロ、フロント/リアウイング、シャークフィン、
+     サイドポッド、エアボックス、ミラー、サスペンションアームまで作り込む */
+  var paint=new THREE.MeshPhysicalMaterial({color:color,roughness:0.32,metalness:0.25,clearcoat:1,clearcoatRoughness:0.08,envMapIntensity:1.3});
+  var carbonTex=(function(){ var c=document.createElement('canvas'); c.width=c.height=32; var gg=c.getContext('2d');
+    for(var y=0;y<8;y++)for(var x=0;x<8;x++){ var h=((x+y)%2===0); gg.fillStyle=h?'#1b1e22':'#0c0e10'; gg.fillRect(x*4,y*4,4,4);
+      gg.fillStyle='rgba(255,255,255,0.10)'; if(h) gg.fillRect(x*4,y*4,4,1.4); else gg.fillRect(x*4,y*4,1.4,4); }
     var t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(6,6); return t; })();
-  var dark=new THREE.MeshStandardMaterial({map:carbonTex,color:0xbfc3c7,roughness:0.42,metalness:0.35});
+  var carbon=new THREE.MeshStandardMaterial({map:carbonTex,color:0xbfc3c7,roughness:0.42,metalness:0.35});
+  var black=new THREE.MeshStandardMaterial({color:0x0a0b0c,roughness:0.6,metalness:0.2});
   var white=new THREE.MeshStandardMaterial({color:0xf4f4f0,roughness:0.4});
-  var glass=new THREE.MeshPhysicalMaterial({color:0x0d141c,roughness:0.06,metalness:0,transparent:true,opacity:0.88,envMapIntensity:1.6,clearcoat:1});
-  function box(w,h,l,x,y,z,m){var o=new THREE.Mesh(new THREE.BoxGeometry(w,h,l),m||paint);o.position.set(x,y,z);o.castShadow=true;body.add(o);return o;}
-  box(0.66,0.38,2.7,0,0.5,0.0);
-  var nose=new THREE.Mesh(new THREE.ConeGeometry(0.3,1.9,12),paint);nose.rotation.x=Math.PI/2;nose.position.set(0,0.42,2.25);nose.castShadow=true;body.add(nose);
-  box(1.5,0.05,3.8,0,0.2,-0.1,dark);
+  var glass=new THREE.MeshPhysicalMaterial({color:0x0d141c,roughness:0.06,metalness:0,transparent:true,opacity:0.9,envMapIntensity:1.6,clearcoat:1});
+  function box(w,h,l,x,y,z,m,rx){var o=new THREE.Mesh(new THREE.BoxGeometry(w,h,l),m||paint);o.position.set(x,y,z);if(rx)o.rotation.x=rx;o.castShadow=true;body.add(o);return o;}
+  function cyl(rt,rb,len,seg,x,y,z,m,rx,rz){var o=new THREE.Mesh(new THREE.CylinderGeometry(rt,rb,len,seg),m||carbon);o.position.set(x,y,z);if(rx)o.rotation.x=rx;if(rz)o.rotation.z=rz;o.castShadow=true;body.add(o);return o;}
+  // floor & diffuser
+  box(1.86,0.06,5.5,0,0.13,-0.1,carbon);
+  box(1.45,0.05,3.2,0,0.185,-0.2,carbon);
+  box(1.3,0.16,0.42,0,0.27,-2.38,carbon);
+  for(var df=0;df<4;df++) box(0.03,0.13,0.36,-0.45+df*0.3,0.27,-2.38,black);
+  // monocoque & cockpit
+  box(0.62,0.42,2.7,0,0.52,0.1,paint);
+  box(0.72,0.30,1.15,0,0.60,0.32,paint);
+  box(0.5,0.2,0.9,0,0.44,0.95,paint);
+  // nose (tapered)
+  cyl(0.075,0.21,2.3,12,0,0.47,1.8,paint,Math.PI/2+0.05);
+  box(0.16,0.05,0.5,0,0.60,1.55,white); // nose stripe
+  // front wing: main plane + flap + endplates + cascades
+  box(2.0,0.045,0.5,0,0.10,2.8,carbon);
+  box(1.9,0.04,0.3,0,0.175,2.66,carbon,-0.28);
+  box(1.7,0.035,0.22,0,0.235,2.55,carbon,-0.45);
   [-1,1].forEach(function(k){
-    box(0.5,0.34,1.7,k*0.62,0.44,-0.3);
-    box(0.05,0.22,0.6,k*1.05,0.24,2.85,dark);
-    box(0.05,0.62,0.7,k*0.85,0.85,-2.05,dark);
+    box(0.045,0.17,0.58,k*0.99,0.17,2.76,paint);
+    box(0.04,0.10,0.24,k*0.99,0.30,2.62,carbon,-0.3);
+    box(0.30,0.03,0.16,k*0.86,0.22,2.86,carbon);
   });
-  box(2.1,0.05,0.55,0,0.13,2.85,dark);
-  box(0.5,0.36,1.3,0,0.66,-1.2);
-  box(0.28,0.5,0.8,0,0.92,-0.75);
-  box(0.14,0.12,2.7,0,0.7,0.0,white);
-  var hm=new THREE.Mesh(new THREE.SphereGeometry(0.17,12,10),white);hm.position.set(0,0.82,0.2);body.add(hm);
-  /* [v5] コックピットを覆うガラスキャノピー（ヘルメットが透けて見える） */
-  var canopy=new THREE.Mesh(new THREE.SphereGeometry(0.34,18,12),glass);
-  canopy.scale.set(0.95,0.62,1.9); canopy.position.set(0,0.78,0.05); canopy.castShadow=true; body.add(canopy);
-  /* [v5] テールライトのグローと、ブースト時のエキゾーストフレーム（スプライト） */
+  // sidepods + inlets + undercut
+  [-1,1].forEach(function(k){
+    box(0.54,0.38,1.95,k*0.56,0.44,-0.55,paint);
+    box(0.42,0.20,0.08,k*0.56,0.50,0.44,black);
+    box(0.48,0.20,1.6,k*0.58,0.25,-0.62,carbon);
+    box(0.05,0.26,0.5,k*0.80,0.32,0.95,carbon); // bargeboard
+    // mirrors
+    box(0.14,0.03,0.03,k*0.47,0.76,0.62,carbon);
+    box(0.05,0.09,0.17,k*0.56,0.78,0.62,paint);
+    // camera pods on nose
+    box(0.09,0.07,0.16,k*0.20,0.56,1.45,carbon);
+  });
+  // engine cover + shark fin + airbox
+  box(0.42,0.36,1.9,0,0.70,-1.2,paint);
+  box(0.17,0.025,1.7,0,0.90,-1.2,white); // spine stripe
+  (function(){ var sh=new THREE.Shape();
+    sh.moveTo(0.35,0.80); sh.lineTo(-2.25,0.82); sh.lineTo(-2.25,1.30); sh.lineTo(-0.55,0.98); sh.lineTo(0.35,0.80);
+    var geo=new THREE.ExtrudeGeometry(sh,{depth:0.045,bevelEnabled:false}); geo.rotateY(Math.PI/2); geo.translate(-0.022,0,0);
+    var fin=new THREE.Mesh(geo,paint); fin.castShadow=true; body.add(fin); })();
+  box(0.32,0.27,0.55,0,1.0,-0.6,paint);
+  cyl(0.09,0.11,0.1,10,0,1.0,-0.28,black,Math.PI/2); // airbox intake mouth
+  cyl(0.012,0.012,0.4,6,0.14,1.22,-0.55,black); // antenna
+  cyl(0.008,0.008,0.3,6,-0.1,1.18,-0.7,black);
+  // halo + driver
+  (function(){ var halo=new THREE.Mesh(new THREE.TorusGeometry(0.40,0.042,8,20),carbon);
+    halo.rotation.x=Math.PI/2; halo.scale.set(1,1.35,1); halo.position.set(0,0.88,0.28); halo.castShadow=true; body.add(halo);
+    cyl(0.035,0.045,0.34,8,0,0.72,0.72,carbon,0.5); })();
+  var helm=new THREE.Mesh(new THREE.SphereGeometry(0.175,14,12),white); helm.position.set(0,0.80,0.26); helm.castShadow=true; body.add(helm);
+  box(0.27,0.09,0.06,0,0.83,0.415,glass); // visor
+  box(0.30,0.05,0.30,0,0.70,0.26,black); // cockpit opening rim
+  // rear wing + beam wing + rain light
+  box(0.09,0.55,0.30,0,0.74,-2.32,carbon);
+  box(1.06,0.05,0.44,0,1.04,-2.44,carbon,0.32);
+  box(1.06,0.045,0.30,0,1.17,-2.55,paint,0.32);
+  [-1,1].forEach(function(k){ box(0.045,0.36,0.64,k*0.545,1.03,-2.46,paint); });
+  box(0.9,0.04,0.26,0,0.56,-2.38,carbon,0.2);
+  box(0.07,0.16,0.04,0,0.60,-2.52,new THREE.MeshStandardMaterial({color:0xff2a20,emissive:0xcc1108,emissiveIntensity:1.2}));
+  cyl(0.05,0.05,0.16,10,0,0.44,-2.42,new THREE.MeshStandardMaterial({color:0x8a8f94,roughness:0.35,metalness:0.9}),Math.PI/2); // exhaust
+  // suspension arms (visual)
+  [[-1,1.6],[1,1.6],[-1,-1.45],[1,-1.45]].forEach(function(wp){
+    var arm=box(0.55,0.035,0.05,wp[0]*0.68,0.44,wp[1]+0.18,carbon); arm.rotation.z=wp[0]*0.5;
+    var arm2=box(0.55,0.035,0.05,wp[0]*0.68,0.44,wp[1]-0.18,carbon); arm2.rotation.z=wp[0]*0.5;
+  });
+  // glow sprites: tail + exhaust flame
   var glowTexC=document.createElement('canvas'); glowTexC.width=glowTexC.height=64;
   var gg2=glowTexC.getContext('2d'); var rg2=gg2.createRadialGradient(32,32,2,32,32,30);
   rg2.addColorStop(0,'rgba(255,255,255,0.9)'); rg2.addColorStop(1,'rgba(255,255,255,0)'); gg2.fillStyle=rg2; gg2.fillRect(0,0,64,64);
   var glowTex=new THREE.CanvasTexture(glowTexC);
   var tailGlow=new THREE.Sprite(new THREE.SpriteMaterial({map:glowTex,color:0xff3524,transparent:true,opacity:0.5,blending:THREE.AdditiveBlending,depthWrite:false}));
-  tailGlow.scale.set(1.5,0.5,1); tailGlow.position.set(0,0.82,-2.46); body.add(tailGlow);
+  tailGlow.scale.set(1.1,0.6,1); tailGlow.position.set(0,0.60,-2.60); body.add(tailGlow);
   var flame=new THREE.Sprite(new THREE.SpriteMaterial({map:glowTex,color:0xffa02e,transparent:true,opacity:0,blending:THREE.AdditiveBlending,depthWrite:false}));
-  flame.scale.set(0.7,0.7,1); flame.position.set(0,0.34,-2.62); body.add(flame);
+  flame.scale.set(0.7,0.7,1); flame.position.set(0,0.44,-2.62); body.add(flame);
   g.userData.tailGlow=tailGlow; g.userData.flame=flame;
-  box(0.06,0.06,0.9,0,1.0,0.3,dark); box(0.06,0.24,0.06,0,0.9,0.75,dark);
-  box(1.7,0.07,0.5,0,1.18,-2.1,dark); box(0.1,0.5,0.1,0,0.9,-2.0,dark);
-  box(1.0,0.07,0.04,0,0.82,-2.4,new THREE.MeshStandardMaterial({color:0xff2a20,emissive:0xcc1108,emissiveIntensity:0.9}));
-  /* [v5] タイヤはトレッド（溝）テクスチャ＋バンプで実在感を出し、ホイールはディスク＋5本スポークに */
-  var tireTex=(function(){ var c=document.createElement('canvas'); c.width=128; c.height=32; var g=c.getContext('2d');
-    g.fillStyle='#17181a'; g.fillRect(0,0,128,32);
-    g.fillStyle='#08090a';
-    for(var x=0;x<8;x++){ g.save(); g.translate(x*16+8,16); g.rotate(0.5); g.fillRect(-2.4,-19,4.8,38); g.restore(); }
-    g.fillRect(0,14.6,128,2.8);
-    for(var n=0;n<300;n++){ g.fillStyle='rgba(255,255,255,'+(Math.random()*0.05)+')'; g.fillRect(Math.random()*128,Math.random()*32,1.2,1.2); }
+  // wheels with tread, coloured compound band, disc + spokes
+  var tireTex=(function(){ var c=document.createElement('canvas'); c.width=128; c.height=32; var gg=c.getContext('2d');
+    gg.fillStyle='#17181a'; gg.fillRect(0,0,128,32); gg.fillStyle='#08090a';
+    for(var x=0;x<8;x++){ gg.save(); gg.translate(x*16+8,16); gg.rotate(0.5); gg.fillRect(-2.4,-19,4.8,38); gg.restore(); }
+    gg.fillRect(0,14.6,128,2.8);
+    for(var n=0;n<300;n++){ gg.fillStyle='rgba(255,255,255,'+(Math.random()*0.05)+')'; gg.fillRect(Math.random()*128,Math.random()*32,1.2,1.2); }
     var t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(3,1);
     if(THREE.SRGBColorSpace) t.colorSpace=THREE.SRGBColorSpace; return t; })();
-  var wheels=[],wm=new THREE.MeshStandardMaterial({map:tireTex,bumpMap:tireTex,bumpScale:0.35,color:0xd8d8d8,roughness:0.94}),hm2=new THREE.MeshStandardMaterial({color:0xb9bfc6,roughness:0.28,metalness:0.95});
+  var wheels=[],wm=new THREE.MeshStandardMaterial({map:tireTex,bumpMap:tireTex,bumpScale:0.35,color:0xd8d8d8,roughness:0.94}),
+      hm2=new THREE.MeshStandardMaterial({color:0xb9bfc6,roughness:0.28,metalness:0.95}),
+      bandM=new THREE.MeshStandardMaterial({color:0xf7c948,roughness:0.5}); // イエローコンパウンドのリング
   [[-1,1.6,0.34,0.34],[1,1.6,0.34,0.34],[-1,-1.45,0.38,0.46],[1,-1.45,0.38,0.46]].forEach(function(w,i){
-    var geo=new THREE.CylinderGeometry(w[2],w[2],w[3],16);geo.rotateZ(Math.PI/2);
+    var geo=new THREE.CylinderGeometry(w[2],w[2],w[3],20);geo.rotateZ(Math.PI/2);
     var pv=new THREE.Group();pv.position.set(w[0]*(0.95+w[3]/2-0.17),w[2],w[1]);
     var t=new THREE.Mesh(geo,wm);t.castShadow=true;pv.add(t);
-    var h=new THREE.Mesh(new THREE.CylinderGeometry(0.185,0.185,w[3]*0.7,18),hm2);h.rotation.z=Math.PI/2;t.add(h); // [v5] ディスクはタイヤ子要素にして一緒に回す
-    for(var sp2=0;sp2<5;sp2++){ var spoke=new THREE.Mesh(new THREE.BoxGeometry(w[3]+0.05,0.30,0.085),dark);
-      spoke.rotation.x=sp2/5*Math.PI*2; spoke.translateY(0.09); t.add(spoke); } // [v5] 5本スポーク（タイヤと一緒に回転）
+    var band=new THREE.Mesh(new THREE.CylinderGeometry(w[2]+0.006,w[2]+0.006,w[3]*0.30,20),bandM);band.rotation.z=Math.PI/2;t.add(band);
+    var h=new THREE.Mesh(new THREE.CylinderGeometry(0.185,0.185,w[3]*0.7,18),hm2);h.rotation.z=Math.PI/2;t.add(h);
+    for(var sp2=0;sp2<5;sp2++){ var spoke=new THREE.Mesh(new THREE.BoxGeometry(w[3]+0.05,0.30,0.085),carbon);
+      spoke.rotation.x=sp2/5*Math.PI*2; spoke.translateY(0.09); t.add(spoke); }
     var cap=new THREE.Mesh(new THREE.CylinderGeometry(0.06,0.06,w[3]+0.06,10),paint);cap.rotation.z=Math.PI/2;t.add(cap);
     g.add(pv);
-    // [v2] サスペンション用に基準位置と各輪のバネ状態を持たせる
     wheels.push({pivot:pv,tire:t,front:i<2,baseX:pv.position.x,baseY:pv.position.y,susp:0,suspV:0,phase:i*1.93+(w[0]<0?0.7:0)});
   });
   g.userData.wheels=wheels; g.userData.body=body; scene.add(g);return g;
@@ -5448,7 +5585,7 @@ function buildCourseSeg(){
   });
 }
 buildCourseSeg();
-var CAMS=[{d:9.8,h:4.3,l:7,ly:1.1,f:62,n:'三人称'},{d:6.2,h:2.7,l:7,ly:1.1,f:62,n:'三人称（近）'},{d:0,h:0,l:25,ly:1.0,f:76,n:'一人称'}];
+var CAMS=[{d:9.0,h:3.3,l:7.5,ly:1.0,f:64,n:'三人称'},{d:6.2,h:2.7,l:7,ly:1.1,f:62,n:'三人称（近）'},{d:0,h:0,l:25,ly:1.0,f:76,n:'一人称'}]; // [v6] 既定カメラを低く近くして迫力を出す
 function cycleCam(){camMode=(camMode+1)%3;camera.near=camMode===2?0.05:0.1;camera.updateProjectionMatrix();try{localStorage.setItem('f1_cam',camMode);}catch(e){}
   showMsg(CAMS[camMode].n,'');setTimeout(function(){if(state!=='count')showMsg('','');},700);}
 document.getElementById('btnCam').addEventListener('pointerdown',function(e){e.preventDefault();cycleCam();});
@@ -5458,6 +5595,7 @@ bindBtn('btnPause','_p');
 document.getElementById('btnPause').addEventListener('pointerdown',function(){setPaused(true);});
 document.getElementById('btnResume').addEventListener('click',function(){setPaused(false);});
 document.getElementById('btnRestart').addEventListener('click',function(){setPaused(false);startCountdown();});
+document.getElementById('btnPauseTitle').addEventListener('click',function(){backToTitle();}); // [v6] ポーズ画面からタイトルへ（backToTitle内でポーズ解除も行う）
 document.addEventListener('visibilitychange',function(){if(document.hidden)setPaused(true);});
 function chkOrient(){if(AUTO&&innerHeight>innerWidth)setPaused(true);}
 window.addEventListener('resize',chkOrient);
