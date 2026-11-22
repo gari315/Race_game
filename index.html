@@ -33,7 +33,7 @@
   .winRow.me{color:var(--accent);font-weight:700;}
   .winRow.me .wt{color:var(--accent);}
   #winBtns{display:flex;gap:5px;margin-top:6px;}
-  .winbtn{flex:1;padding:7px 2px;border-radius:6px;border:1px solid var(--line);background:rgba(255,255,255,.1);color:#fff;font-size:11px;font-weight:700;cursor:pointer;}
+  .winbtn{flex:1;padding:9px 2px;border-radius:6px;border:1px solid var(--line);background:rgba(255,255,255,.14);color:#fff;font-size:11px;font-weight:700;cursor:pointer;touch-action:manipulation;pointer-events:auto;position:relative;z-index:2;} /* [v5] タッチでも確実に反応するよう manipulation を明示 */
   .winbtn:active{background:var(--accent);color:#111;}
   #driftBox{position:absolute;top:calc(8px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);text-align:center;min-width:150px;}
   #driftLabel{font-size:11px;letter-spacing:.22em;color:var(--accent);font-weight:700;}
@@ -120,6 +120,7 @@
 </head>
 <body>
 <div id="game"></div>
+<div id="vignette" style="position:fixed;inset:0;pointer-events:none;z-index:4;background:radial-gradient(ellipse at center,transparent 58%,rgba(4,8,14,0.38) 100%);"></div> <!-- [v5] 画面端を落として映画的な締まりを出す -->
 
 <div class="hud" id="hud">
   <div class="plate" id="posBox">
@@ -4944,14 +4945,14 @@ function fullSearch(pos){
 /* ============================== SCENE ============================== */
 var container=document.getElementById('game');
 var renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});
-renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,1.5));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2)); // [v5] 解像感アップ（上限2）
 renderer.setSize(window.innerWidth,window.innerHeight);
 renderer.shadowMap.enabled=true;
-renderer.shadowMap.type=THREE.PCFShadowMap;
+renderer.shadowMap.type=THREE.PCFSoftShadowMap; // [v5] 影の縁を柔らかく
 if('outputColorSpace' in renderer&&THREE.SRGBColorSpace) renderer.outputColorSpace=THREE.SRGBColorSpace;
 else if(THREE.sRGBEncoding) renderer.outputEncoding=THREE.sRGBEncoding;
 renderer.toneMapping=THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure=1.05;
+renderer.toneMappingExposure=1.12; // [v5] 少し明るく、空と車体の階調を出す
 container.appendChild(renderer.domElement);
 
 var scene=new THREE.Scene();
@@ -4961,16 +4962,58 @@ var camera=new THREE.PerspectiveCamera(62,window.innerWidth/window.innerHeight,0
 camera.position.set(0,6,-14);
 
 var pmrem=new THREE.PMREMGenerator(renderer);
-scene.environment=pmrem.fromScene(new THREE.RoomEnvironment(),0.04).texture;
+/* [v5] 環境反射を室内スタジオ（RoomEnvironment）から「青空＋地面＋太陽」の屋外シーンに差し替え。
+   車の塗装やガラスに映る色が実際の空と合うようになり、質感が一段リアルになる */
+try{
+  var envScene=new THREE.Scene();
+  var ec=document.createElement('canvas'); ec.width=16; ec.height=256;
+  var eg=ec.getContext('2d'); var egr=eg.createLinearGradient(0,0,0,256);
+  egr.addColorStop(0,'#2f6db3'); egr.addColorStop(0.45,'#7db3e0'); egr.addColorStop(0.62,'#cfdde8'); egr.addColorStop(0.66,'#5d7046'); egr.addColorStop(1,'#39432e');
+  eg.fillStyle=egr; eg.fillRect(0,0,16,256);
+  var et=new THREE.CanvasTexture(ec); if(THREE.SRGBColorSpace) et.colorSpace=THREE.SRGBColorSpace;
+  var dome=new THREE.Mesh(new THREE.SphereGeometry(60,24,16),new THREE.MeshBasicMaterial({map:et,side:THREE.BackSide}));
+  envScene.add(dome);
+  var sunBall=new THREE.Mesh(new THREE.SphereGeometry(4,12,8),new THREE.MeshBasicMaterial({color:0xfff3cf}));
+  sunBall.position.set(28,42,14); envScene.add(sunBall);
+  scene.environment=pmrem.fromScene(envScene,0.04).texture;
+}catch(e){ scene.environment=pmrem.fromScene(new THREE.RoomEnvironment(),0.04).texture; }
 
 var sun=new THREE.DirectionalLight(0xfff2dd,1.35);
 sun.position.set(120,180,60);
 sun.castShadow=true;
-sun.shadow.mapSize.set(1024,1024);
+sun.shadow.mapSize.set(2048,2048); // [v5] 影解像度を倍に（太陽はプレイヤーを追うので範囲は従来どおり狭く、密度が上がる）
+sun.shadow.radius=4; sun.shadow.normalBias=0.02;
 sun.shadow.camera.left=-60;sun.shadow.camera.right=60;sun.shadow.camera.top=60;sun.shadow.camera.bottom=-60;
 sun.shadow.camera.far=500; sun.shadow.bias=-0.0004;
 scene.add(sun); scene.add(sun.target);
 scene.add(new THREE.HemisphereLight(0xbfd9ee,0x3d4a35,0.75));
+
+/* [v5] 空のドーム（グラデーション＋地平線の霞）、太陽のグロー、流れる雲で空気感を出す */
+(function(){
+  var c=document.createElement('canvas'); c.width=32; c.height=512;
+  var g=c.getContext('2d'); var gr=g.createLinearGradient(0,0,0,512);
+  gr.addColorStop(0,'#2c66a8'); gr.addColorStop(0.42,'#6ea8d8'); gr.addColorStop(0.62,'#a8c8e2');
+  gr.addColorStop(0.72,'#d9e6ee'); gr.addColorStop(0.78,'#cfd8cf'); gr.addColorStop(1,'#b9c4bb');
+  g.fillStyle=gr; g.fillRect(0,0,32,512);
+  var t=new THREE.CanvasTexture(c); if(THREE.SRGBColorSpace) t.colorSpace=THREE.SRGBColorSpace;
+  var sky=new THREE.Mesh(new THREE.SphereGeometry(1350,28,18),new THREE.MeshBasicMaterial({map:t,side:THREE.BackSide,fog:false,depthWrite:false}));
+  sky.renderOrder=-10; scene.add(sky);
+  scene.background=null; // 空ドームが背景を担う
+  // 太陽グロー（スプライト）と雲
+  function softTex(){ var cc=document.createElement('canvas'); cc.width=cc.height=128; var gg=cc.getContext('2d');
+    var rg=gg.createRadialGradient(64,64,4,64,64,62); rg.addColorStop(0,'rgba(255,255,255,0.9)'); rg.addColorStop(1,'rgba(255,255,255,0)');
+    gg.fillStyle=rg; gg.fillRect(0,0,128,128); return new THREE.CanvasTexture(cc); }
+  var st=softTex();
+  var glow=new THREE.Sprite(new THREE.SpriteMaterial({map:st,color:0xffe9a8,transparent:true,opacity:0.85,blending:THREE.AdditiveBlending,depthWrite:false,fog:false}));
+  glow.scale.setScalar(420); glow.position.set(620,760,310); scene.add(glow);
+  window.__clouds=[];
+  for(var ci=0;ci<26;ci++){
+    var cl=new THREE.Sprite(new THREE.SpriteMaterial({map:st,color:0xffffff,transparent:true,opacity:0.32+Math.random()*0.25,depthWrite:false}));
+    cl.position.set((Math.random()-0.5)*2200,120+Math.random()*130,(Math.random()-0.5)*2200);
+    cl.scale.set(180+Math.random()*260,42+Math.random()*40,1);
+    scene.add(cl); window.__clouds.push(cl);
+  }
+})();
 
 /* ground */
 var groundGeo=new THREE.PlaneGeometry(1800,1800,64,64);
@@ -4983,7 +5026,21 @@ for(var gi=0;gi<gpos.count;gi++){
   gpos.setZ(gi,h);
 }
 groundGeo.computeVertexNormals();
-var ground=new THREE.Mesh(groundGeo,new THREE.MeshStandardMaterial({color:0x4a6b3a,roughness:1,metalness:0}));
+/* [v5] 芝生に procedural テクスチャ（色ムラ＋細かいノイズ）を敷き、単色の平らな印象を消す */
+function makeGrassTexture(){
+  var c=document.createElement('canvas'); c.width=c.height=256; var g=c.getContext('2d');
+  g.fillStyle='#4c6c38'; g.fillRect(0,0,256,256);
+  for(var i=0;i<5200;i++){ var v=Math.random();
+    g.fillStyle=v<0.5?'rgba(30,52,22,'+(0.12+Math.random()*0.25)+')':'rgba(140,175,95,'+(0.08+Math.random()*0.2)+')';
+    g.fillRect(Math.random()*256,Math.random()*256,1.6,3.2); }
+  for(var j=0;j<26;j++){ var x=Math.random()*256,y=Math.random()*256,r=18+Math.random()*46;
+    var rg=g.createRadialGradient(x,y,2,x,y,r); rg.addColorStop(0,'rgba(112,128,66,0.20)'); rg.addColorStop(1,'rgba(112,128,66,0)');
+    g.fillStyle=rg; g.beginPath(); g.arc(x,y,r,0,7); g.fill(); }
+  var t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(90,90); t.anisotropy=4;
+  if(THREE.SRGBColorSpace) t.colorSpace=THREE.SRGBColorSpace;
+  return t;
+}
+var ground=new THREE.Mesh(groundGeo,new THREE.MeshStandardMaterial({map:makeGrassTexture(),color:0xb9c4a4,roughness:1,metalness:0}));
 ground.rotation.x=-Math.PI/2; ground.position.y=-0.25; ground.receiveShadow=true;
 scene.add(ground);
 
@@ -4991,8 +5048,19 @@ scene.add(ground);
 function makeRoadTexture(){
   var c=document.createElement('canvas'); c.width=128; c.height=256;
   var g=c.getContext('2d');
-  g.fillStyle='#33373c'; g.fillRect(0,0,128,256);
-  for(var i=0;i<900;i++){ g.fillStyle='rgba(255,255,255,'+(Math.random()*0.05)+')'; g.fillRect(Math.random()*128,Math.random()*256,1.5,1.5); }
+  g.fillStyle='#2f3236'; g.fillRect(0,0,128,256);
+  for(var i=0;i<2600;i++){ var lv=Math.random();
+    g.fillStyle=lv<0.55?'rgba(255,255,255,'+(Math.random()*0.06)+')':'rgba(0,0,0,'+(Math.random()*0.16)+')';
+    g.fillRect(Math.random()*128,Math.random()*256,1.4,1.4); }
+  // [v5] タイヤの通り道の黒ずみ（左右2本の轍）と中央の薄い摩耗で「使われた路面」に
+  [30,98].forEach(function(x){ var rg=g.createLinearGradient(x-13,0,x+13,0);
+    rg.addColorStop(0,'rgba(0,0,0,0)'); rg.addColorStop(0.5,'rgba(0,0,0,0.20)'); rg.addColorStop(1,'rgba(0,0,0,0)');
+    g.fillStyle=rg; g.fillRect(x-13,0,26,256); });
+  g.fillStyle='rgba(0,0,0,0.10)'; g.fillRect(58,0,12,256);
+  // ひび割れ
+  g.strokeStyle='rgba(0,0,0,0.35)'; g.lineWidth=1;
+  for(var cr=0;cr<7;cr++){ g.beginPath(); var cx=Math.random()*128,cy=Math.random()*256; g.moveTo(cx,cy);
+    for(var cs=0;cs<4;cs++){ cx+=(Math.random()-0.5)*22; cy+=Math.random()*20; g.lineTo(cx,cy); } g.stroke(); }
   g.fillStyle='#e8e8e2'; g.fillRect(2,0,4,256); g.fillRect(122,0,4,256);
   g.fillStyle='#f5c542'; g.fillRect(62,14,4,104);
   var t=new THREE.CanvasTexture(c);
@@ -5018,7 +5086,8 @@ function buildRibbon(halfW,y,mat,vScale){
   geo.setIndex(indices); geo.computeVertexNormals();
   var m=new THREE.Mesh(geo,mat); m.receiveShadow=true; return m;
 }
-var roadMat=new THREE.MeshStandardMaterial({map:makeRoadTexture(),roughness:0.94,metalness:0,side:THREE.DoubleSide});
+var roadTex=makeRoadTexture(); // [v5] 同じ絵を bump にも使い、アスファルトの凹凸を光で拾わせる
+var roadMat=new THREE.MeshStandardMaterial({map:roadTex,bumpMap:roadTex,bumpScale:0.6,roughness:0.93,metalness:0,side:THREE.DoubleSide});
 var shoulderMat=new THREE.MeshStandardMaterial({color:0xc9b98f,roughness:1,side:THREE.DoubleSide});
 /* [v4] 路面リボンの scene 追加は buildTrackScene() 側で行う（コース切替で作り直すため） */
 
@@ -5083,9 +5152,9 @@ function buildTrackScene(){
   kg.fillStyle='#d8261f';kg.fillRect(0,0,4,16);kg.fillStyle='#f4f4f0';kg.fillRect(0,16,4,16);
   var kt=new THREE.CanvasTexture(kc);kt.wrapS=kt.wrapT=THREE.RepeatWrapping;
   if(THREE.SRGBColorSpace)kt.colorSpace=THREE.SRGBColorSpace;
-  var km=new THREE.MeshStandardMaterial({map:kt,roughness:0.8,side:THREE.DoubleSide});
-  var wm=new THREE.MeshStandardMaterial({color:0x27408b,roughness:0.7,side:THREE.DoubleSide});
-  var wm2=new THREE.MeshStandardMaterial({color:0xeeeeee,roughness:0.7,side:THREE.DoubleSide});
+  var km=new THREE.MeshStandardMaterial({map:kt,roughness:0.55,side:THREE.DoubleSide}); // [v5] 縁石は少し滑らかに光を受ける
+  var wm=new THREE.MeshStandardMaterial({color:0x27408b,roughness:0.45,metalness:0.35,side:THREE.DoubleSide}); // [v5] 壁に金属感
+  var wm2=new THREE.MeshStandardMaterial({color:0xeeeeee,roughness:0.45,metalness:0.35,side:THREE.DoubleSide});
   [-1,1].forEach(function(sd){
     strip(ROAD_HALF-0.1,ROAD_HALF+1.3,sd,0.035,0.035,km,4);
     strip(RAIL_DIST-0.3,RAIL_DIST-0.3,sd,0,1.0,wm,10);
@@ -5099,9 +5168,11 @@ function buildTrackScene(){
   var leafG=new THREE.ConeGeometry(1.7,4.4,7);
   var trunkM=new THREE.MeshStandardMaterial({color:0x5a4230,roughness:1});
   var leafM=new THREE.MeshStandardMaterial({color:0x2e5d33,roughness:1});
+  var leafM2=new THREE.MeshStandardMaterial({color:0x3f7a3c,roughness:1}); // [v5] 葉の2層目（明るい色で立体感）
   var N=420;
   var trunks=new THREE.InstancedMesh(trunkG,trunkM,N);
   var leaves=new THREE.InstancedMesh(leafG,leafM,N);
+  var leaves2=new THREE.InstancedMesh(leafG,leafM2,N);
   var dummy=new THREE.Object3D(); var placed=0,tries=0;
   while(placed<N&&tries<4000){
     tries++;
@@ -5112,11 +5183,13 @@ function buildTrackScene(){
     dummy.position.set(x,0.8*s,z); dummy.scale.setScalar(s); dummy.rotation.y=Math.random()*3;
     dummy.updateMatrix(); trunks.setMatrixAt(placed,dummy.matrix);
     dummy.position.y=(1.6+2.0)*s; dummy.updateMatrix(); leaves.setMatrixAt(placed,dummy.matrix);
+    dummy.position.y=(1.6+3.1)*s; dummy.scale.setScalar(s*0.62); dummy.updateMatrix(); leaves2.setMatrixAt(placed,dummy.matrix);
+    dummy.scale.setScalar(s);
     placed++;
   }
-  trunks.count=leaves.count=placed;
-  leaves.castShadow=true;
-  trackGroup.add(trunks); trackGroup.add(leaves); // [v4] 木はコース沿いに配置し直すため trackGroup 側へ
+  trunks.count=leaves.count=leaves2.count=placed;
+  leaves.castShadow=true; leaves2.castShadow=true;
+  trackGroup.add(trunks); trackGroup.add(leaves); trackGroup.add(leaves2); // [v4] 木はコース沿いに配置し直すため trackGroup 側へ
   /* [v4] 山はコース非依存なので初回だけ scene に作る（buildTrackScene の再実行で重複させない） */
   if(mountainsBuilt) return; mountainsBuilt=true;
   var rockM=new THREE.MeshStandardMaterial({color:0x707a80,roughness:1,flatShading:true});
@@ -5127,10 +5200,10 @@ function buildTrackScene(){
     var h=120+Math.random()*130, r=h*0.75;
     var cone=new THREE.Mesh(new THREE.ConeGeometry(r,h,6),rockM);
     cone.position.set(Math.cos(ang)*dist,h/2-6,Math.sin(ang)*dist);
-    cone.rotation.y=Math.random()*3; scene.add(cone);
+    cone.rotation.y=Math.random()*3; cone.scale.set(0.85+Math.random()*0.35,1,0.85+Math.random()*0.35); scene.add(cone); // [v5] 山の形を均一にしない
     var cap=new THREE.Mesh(new THREE.ConeGeometry(r*0.42,h*0.4,6),snowM);
     cap.position.set(cone.position.x,h*0.8-6,cone.position.z);
-    cap.rotation.y=cone.rotation.y; scene.add(cap);
+    cap.rotation.y=cone.rotation.y; cap.scale.copy(cone.scale); scene.add(cap); // [v5]
   }
 })();
 } // [v4] buildTrackScene ここまで
@@ -5156,9 +5229,16 @@ function buildCar(color){
   // [v2] 車体とタイヤの分離: ボディ系メッシュは body グループにまとめ、タイヤ(pivot)は g 直下に残す。
   // これで車体だけを独立して揺らしても、タイヤは接地したままにできる。
   var body=new THREE.Group(); g.add(body);
-  var paint=new THREE.MeshStandardMaterial({color:color,roughness:0.28,metalness:0.6});
-  var dark=new THREE.MeshStandardMaterial({color:0x101215,roughness:0.5,metalness:0.4});
+  /* [v5] 塗装はクリアコート付きの物理マテリアルに（下地の色＋透明なクリア層の二重反射が車の塗装らしさ）。
+     カーボン部品は織り目テクスチャ、キャノピーは暗いガラスにする */
+  var paint=new THREE.MeshPhysicalMaterial({color:color,roughness:0.34,metalness:0.25,clearcoat:1,clearcoatRoughness:0.08,envMapIntensity:1.25});
+  var carbonTex=(function(){ var c=document.createElement('canvas'); c.width=c.height=32; var g=c.getContext('2d');
+    for(var y=0;y<8;y++)for(var x=0;x<8;x++){ var h=((x+y)%2===0); g.fillStyle=h?'#1b1e22':'#0c0e10'; g.fillRect(x*4,y*4,4,4);
+      g.fillStyle='rgba(255,255,255,0.10)'; if(h) g.fillRect(x*4,y*4,4,1.4); else g.fillRect(x*4,y*4,1.4,4); }
+    var t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(6,6); return t; })();
+  var dark=new THREE.MeshStandardMaterial({map:carbonTex,color:0xbfc3c7,roughness:0.42,metalness:0.35});
   var white=new THREE.MeshStandardMaterial({color:0xf4f4f0,roughness:0.4});
+  var glass=new THREE.MeshPhysicalMaterial({color:0x0d141c,roughness:0.06,metalness:0,transparent:true,opacity:0.88,envMapIntensity:1.6,clearcoat:1});
   function box(w,h,l,x,y,z,m){var o=new THREE.Mesh(new THREE.BoxGeometry(w,h,l),m||paint);o.position.set(x,y,z);o.castShadow=true;body.add(o);return o;}
   box(0.66,0.38,2.7,0,0.5,0.0);
   var nose=new THREE.Mesh(new THREE.ConeGeometry(0.3,1.9,12),paint);nose.rotation.x=Math.PI/2;nose.position.set(0,0.42,2.25);nose.castShadow=true;body.add(nose);
@@ -5173,15 +5253,40 @@ function buildCar(color){
   box(0.28,0.5,0.8,0,0.92,-0.75);
   box(0.14,0.12,2.7,0,0.7,0.0,white);
   var hm=new THREE.Mesh(new THREE.SphereGeometry(0.17,12,10),white);hm.position.set(0,0.82,0.2);body.add(hm);
+  /* [v5] コックピットを覆うガラスキャノピー（ヘルメットが透けて見える） */
+  var canopy=new THREE.Mesh(new THREE.SphereGeometry(0.34,18,12),glass);
+  canopy.scale.set(0.95,0.62,1.9); canopy.position.set(0,0.78,0.05); canopy.castShadow=true; body.add(canopy);
+  /* [v5] テールライトのグローと、ブースト時のエキゾーストフレーム（スプライト） */
+  var glowTexC=document.createElement('canvas'); glowTexC.width=glowTexC.height=64;
+  var gg2=glowTexC.getContext('2d'); var rg2=gg2.createRadialGradient(32,32,2,32,32,30);
+  rg2.addColorStop(0,'rgba(255,255,255,0.9)'); rg2.addColorStop(1,'rgba(255,255,255,0)'); gg2.fillStyle=rg2; gg2.fillRect(0,0,64,64);
+  var glowTex=new THREE.CanvasTexture(glowTexC);
+  var tailGlow=new THREE.Sprite(new THREE.SpriteMaterial({map:glowTex,color:0xff3524,transparent:true,opacity:0.5,blending:THREE.AdditiveBlending,depthWrite:false}));
+  tailGlow.scale.set(1.5,0.5,1); tailGlow.position.set(0,0.82,-2.46); body.add(tailGlow);
+  var flame=new THREE.Sprite(new THREE.SpriteMaterial({map:glowTex,color:0xffa02e,transparent:true,opacity:0,blending:THREE.AdditiveBlending,depthWrite:false}));
+  flame.scale.set(0.7,0.7,1); flame.position.set(0,0.34,-2.62); body.add(flame);
+  g.userData.tailGlow=tailGlow; g.userData.flame=flame;
   box(0.06,0.06,0.9,0,1.0,0.3,dark); box(0.06,0.24,0.06,0,0.9,0.75,dark);
   box(1.7,0.07,0.5,0,1.18,-2.1,dark); box(0.1,0.5,0.1,0,0.9,-2.0,dark);
   box(1.0,0.07,0.04,0,0.82,-2.4,new THREE.MeshStandardMaterial({color:0xff2a20,emissive:0xcc1108,emissiveIntensity:0.9}));
-  var wheels=[],wm=new THREE.MeshStandardMaterial({color:0x0c0c0e,roughness:0.9}),hm2=new THREE.MeshStandardMaterial({color:0xb9bfc6,roughness:0.3,metalness:0.9});
+  /* [v5] タイヤはトレッド（溝）テクスチャ＋バンプで実在感を出し、ホイールはディスク＋5本スポークに */
+  var tireTex=(function(){ var c=document.createElement('canvas'); c.width=128; c.height=32; var g=c.getContext('2d');
+    g.fillStyle='#17181a'; g.fillRect(0,0,128,32);
+    g.fillStyle='#08090a';
+    for(var x=0;x<8;x++){ g.save(); g.translate(x*16+8,16); g.rotate(0.5); g.fillRect(-2.4,-19,4.8,38); g.restore(); }
+    g.fillRect(0,14.6,128,2.8);
+    for(var n=0;n<300;n++){ g.fillStyle='rgba(255,255,255,'+(Math.random()*0.05)+')'; g.fillRect(Math.random()*128,Math.random()*32,1.2,1.2); }
+    var t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(3,1);
+    if(THREE.SRGBColorSpace) t.colorSpace=THREE.SRGBColorSpace; return t; })();
+  var wheels=[],wm=new THREE.MeshStandardMaterial({map:tireTex,bumpMap:tireTex,bumpScale:0.35,color:0xd8d8d8,roughness:0.94}),hm2=new THREE.MeshStandardMaterial({color:0xb9bfc6,roughness:0.28,metalness:0.95});
   [[-1,1.6,0.34,0.34],[1,1.6,0.34,0.34],[-1,-1.45,0.38,0.46],[1,-1.45,0.38,0.46]].forEach(function(w,i){
     var geo=new THREE.CylinderGeometry(w[2],w[2],w[3],16);geo.rotateZ(Math.PI/2);
     var pv=new THREE.Group();pv.position.set(w[0]*(0.95+w[3]/2-0.17),w[2],w[1]);
     var t=new THREE.Mesh(geo,wm);t.castShadow=true;pv.add(t);
-    var h=new THREE.Mesh(new THREE.CylinderGeometry(0.17,0.17,w[3]+0.02,10),hm2);h.rotation.z=Math.PI/2;pv.add(h);
+    var h=new THREE.Mesh(new THREE.CylinderGeometry(0.185,0.185,w[3]*0.7,18),hm2);h.rotation.z=Math.PI/2;t.add(h); // [v5] ディスクはタイヤ子要素にして一緒に回す
+    for(var sp2=0;sp2<5;sp2++){ var spoke=new THREE.Mesh(new THREE.BoxGeometry(w[3]+0.05,0.30,0.085),dark);
+      spoke.rotation.x=sp2/5*Math.PI*2; spoke.translateY(0.09); t.add(spoke); } // [v5] 5本スポーク（タイヤと一緒に回転）
+    var cap=new THREE.Mesh(new THREE.CylinderGeometry(0.06,0.06,w[3]+0.06,10),paint);cap.rotation.z=Math.PI/2;t.add(cap);
     g.add(pv);
     // [v2] サスペンション用に基準位置と各輪のバネ状態を持たせる
     wheels.push({pivot:pv,tire:t,front:i<2,baseX:pv.position.x,baseY:pv.position.y,susp:0,suspV:0,phase:i*1.93+(w[0]<0?0.7:0)});
@@ -5239,8 +5344,9 @@ for(var si=0;si<130;si++){
   smokePool.push({sp:sp,life:0,max:1,vel:new THREE.Vector3()});
 }
 var smokeIdx=0;
-function puff(pos,spread,baseScale){
+function puff(pos,spread,baseScale,col){
   var s=smokePool[smokeIdx]; smokeIdx=(smokeIdx+1)%smokePool.length;
+  s.sp.material.color.setHex(col||0xd8dde2); // [v5] 路外では土色のダストにする
   s.sp.visible=true;
   s.sp.position.set(pos.x+(Math.random()-0.5)*spread,0.35,pos.z+(Math.random()-0.5)*spread);
   s.vel.set((Math.random()-0.5)*1.6,1.1+Math.random()*0.9,(Math.random()-0.5)*1.6);
@@ -5323,7 +5429,7 @@ sp.addEventListener('pointermove',function(e){if(e.pointerId===pid)set(e);});
 sp.addEventListener('pointerup',end);sp.addEventListener('pointercancel',end);})();
 function goFull(){try{var d=document.documentElement;if(!document.fullscreenElement&&d.requestFullscreen)d.requestFullscreen().then(function(){try{screen.orientation.lock('landscape').catch(function(){});}catch(e){}}).catch(function(){});}catch(e){}}
 ['contextmenu','selectstart','dragstart','gesturestart'].forEach(function(n){document.addEventListener(n,function(e){e.preventDefault();});});
-['touchstart','touchmove'].forEach(function(n){document.addEventListener(n,function(e){var t=e.target;if(e.touches.length>1||(t.closest&&t.closest('#steerPad,.tbtn,canvas,#hud')))e.preventDefault();},{passive:false});});
+['touchstart','touchmove'].forEach(function(n){document.addEventListener(n,function(e){var t=e.target;if(t.closest&&t.closest('#winPanel'))return; /* [v5] ウイニングランのボタンは click/pointer を殺さない（ここが無反応の原因だった） */ if(e.touches.length>1||(t.closest&&t.closest('#steerPad,.tbtn,canvas,#hud')))e.preventDefault();},{passive:false});});
 var LV_N=['ビギナー','ノーマル','ハード','エキスパート','チャンピオン'],LV_M=[1,1.04,1.08,1.12,1.16],LV_C=[1.9,1.6,1.35,1.15,1.0];
 var aiLevel=0,camMode=0;try{aiLevel=Math.max(0,Math.min(4,+localStorage.getItem('f1_lv')||0));camMode=Math.max(0,Math.min(2,+localStorage.getItem('f1_cam')||0));}catch(e){}
 function buildSegs(){document.querySelectorAll('.lvSeg').forEach(function(sg){sg.innerHTML='';LV_N.forEach(function(n,i){var b=document.createElement('button');b.textContent=n;b.className=i===aiLevel?'on':'';b.addEventListener('click',function(){aiLevel=i;try{localStorage.setItem('f1_lv',i);}catch(e){}buildSegs();});sg.appendChild(b);});});}
@@ -5452,7 +5558,7 @@ function updatePlayer(dt){
   // off-track slowdown
   player.offtrack=player._trackDist>ROAD_HALF+0.4;
   player._offT=(player.offtrack&&Math.abs(vF)<5)?(player._offT||0)+dt:0; if(player._offT>1.5&&inRun()){ respawnPlayer(); player._offT=0; } // [v3] ウイニングラン中も復帰できる
-  if(player.offtrack){ vF-=vF*(player._trackDist>ROAD_HALF+1.5?2.4:0.8)*dt; if(Math.random()<0.5) puff(player.pos,1.2,0.8); }
+  if(player.offtrack){ vF-=vF*(player._trackDist>ROAD_HALF+1.5?2.4:0.8)*dt; if(Math.random()<0.5) puff(player.pos,1.2,0.8,0xbfa06a); } // [v5] 土ぼこり
   player.vel.copy(fwd).multiplyScalar(vF).add(right.clone().multiplyScalar(newVR));
   player.pos.addScaledVector(player.vel,dt);
   // track tracking & guardrail clamp
@@ -5530,6 +5636,11 @@ function applyCarVisual(r,dt,lat){
     if(w.front) w.pivot.rotation.y=-r.steerVis;
   });
   updateSuspension(r,dt); // [v2] サスペンションと車体の揺れ（タイヤは接地側、車体だけ揺れる）
+  // [v5] テールライトのグロー（ブレーキで強く）とブースト時の排気フレーム
+  var ud2=r.mesh.userData;
+  if(ud2.tailGlow) ud2.tailGlow.material.opacity=(r.isPlayer&&input.brake)?0.95:0.45;
+  if(ud2.flame){ var fl=r.isPlayer&&boostT>0; ud2.flame.material.opacity=fl?0.55+Math.random()*0.35:0;
+    if(fl) ud2.flame.scale.set(0.55+Math.random()*0.4,0.55+Math.random()*0.4,1); }
 }
 
 /* ============================== [v2] SUSPENSION & BODY MOTION ==============================
@@ -5738,8 +5849,17 @@ function backToTitle(){
   document.getElementById('startCard').classList.remove('hidden');
   snapCamera();
 }
-document.getElementById('btnWinAgain').addEventListener('click',startCountdown);
-document.getElementById('btnWinTitle').addEventListener('click',backToTitle);
+/* [v5] ウイニングランのボタン: click だけに頼らず pointerdown でも受ける（二重発火はデバウンスで防止）。
+   以前は #hud 内の要素への document レベルの touchstart preventDefault で click が消え、無反応になっていた */
+function bindWinBtn(id,fn){
+  var el=document.getElementById(id),last=-1e9; // 初回は performance.now() が小さくても必ず通す
+  function h(e){ if(e&&e.preventDefault)e.preventDefault(); if(e&&e.stopPropagation)e.stopPropagation();
+    var now=performance.now(); if(now-last<600) return; last=now; fn(); }
+  el.addEventListener('pointerdown',h);
+  el.addEventListener('click',h);
+}
+bindWinBtn('btnWinAgain',startCountdown);
+bindWinBtn('btnWinTitle',backToTitle);
 function rankKey(r){
   if(r.finished) return 1e9 - r.finishTime;
   return r.progress;
@@ -5860,6 +5980,11 @@ function frame(now){
       if(inRun()) collideAll(dt); // [v3] ウイニングラン中も車同士の接触は生きる
       updateCamera(dt);
     }
+    // [v5] 雲をゆっくり流す（プレイヤーの周囲に留まるようラップさせる）
+    if(window.__clouds){ for(var ci2=0;ci2<window.__clouds.length;ci2++){ var cl2=window.__clouds[ci2];
+      cl2.position.x+=dt*(1.2+ci2%3*0.5);
+      if(cl2.position.x-player.pos.x>1200) cl2.position.x-=2400; if(cl2.position.x-player.pos.x<-1200) cl2.position.x+=2400;
+      if(cl2.position.z-player.pos.z>1200) cl2.position.z-=2400; if(cl2.position.z-player.pos.z<-1200) cl2.position.z+=2400; } }
     // smoke update
     for(var i=0;i<smokePool.length;i++){
       var s=smokePool[i];
